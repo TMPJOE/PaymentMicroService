@@ -1,210 +1,252 @@
-# Hotel Microservice Blueprint
+# 💳 Payment Microservice
 
-A lightweight Go microservice built with a clean architecture pattern, featuring PostgreSQL integration, structured logging, JWT authentication, rate limiting, circuit breaker pattern, and HTTP request handling via `chi` router.
+> Stripe-integrated payment processing service for the Hotel Reservation Platform.
 
-## Architecture
+## Overview
 
-The project follows a layered architecture:
-
-```
-cmd/api/main.go → Entry point, wires dependencies
-internal/handler → HTTP handlers, routing, and middleware
-internal/service → Business logic layer
-internal/repo → Data access layer
-internal/database → Database connection management
-internal/logging → Structured logging setup
-internal/models → Domain models
-internal/helper → Utility functions
-internal/config → YAML configuration loader
-```
+The Payment Microservice handles **payment processing** via the [Stripe API](https://stripe.com/docs/api). It creates PaymentIntents, confirms payments with automatic payment methods, and persists payment records in PostgreSQL. The service is called by the BFF during the reservation creation flow to charge the guest before confirming the booking.
 
 ## Tech Stack
 
-- **Router**: [go-chi/chi/v5](https://github.com/go-chi/chi)
-- **Logging**: [go-chi/httplog/v3](https://github.com/go-chi/httplog) + `log/slog`
-- **Database**: [jackc/pgx/v5](https://github.com/jackc/pgx) (PostgreSQL connection pool)
-- **JWT Authentication**: [golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt)
-- **Validation**: [go-playground/validator/v10](https://github.com/go-playground/validator)
-- **Password Hashing**: [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto)
-- **UUID Generation**: [google/uuid](https://github.com/google/uuid)
+| Layer | Technology |
+|---|---|
+| Language | Go 1.25 |
+| Router | [go-chi/chi](https://github.com/go-chi/chi) v5 |
+| Database | PostgreSQL 16 |
+| DB Driver | [pgx](https://github.com/jackc/pgx) v5 |
+| Payment Gateway | [Stripe Go SDK](https://github.com/stripe/stripe-go) v78 |
+| Auth | JWT verification (RSA-256 public key) |
+| UUID | Google UUID v4 |
+| Container | Docker (multi-stage Alpine build) |
 
-## Features
+## Architecture
 
-### Security
-- **JWT Authentication**: RSA-based token validation with configurable issuer and expiration
-- **Security Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, HSTS, CSP
-- **Request ID**: Unique request tracking for debugging and logging
-
-### Resilience
-- **Rate Limiting**: Token bucket algorithm with configurable requests/second and burst
-- **Circuit Breaker**: Automatic failure detection with half-open state for recovery
-- **Graceful Shutdown**: 30-second timeout for in-flight requests
-
-### Configuration
-- **YAML Config**: All settings loaded from `config.yaml` with environment variable expansion
-- **No hardcoded values**: Server port, timeouts, rate limits all configurable
-
-## Prerequisites
-
-- Go 1.25.7+
-- PostgreSQL database
-- Docker & Docker Compose (optional, for local development)
-- RSA key pair for JWT signing (`public.pem`, `private.pem`)
-
-## Getting Started
-
-### 1. Generate JWT Keys
-
-```bash
-# Generate private key
-openssl genrsa -out private.pem 2048
-
-# Generate public key
-openssl rsa -in private.pem -pubout -out public.pem
 ```
-
-### 2. Set Environment Variables
-
-```bash
-export DATABASE_URL="postgres://user:password@localhost:5432/dbname?sslmode=disable"
+app/
+├── cmd/api/          # Application entrypoint
+│   └── main.go
+├── internal/
+│   ├── config/       # YAML config loader
+│   ├── database/     # PostgreSQL connection pool
+│   ├── handler/      # HTTP handlers, routing, JWT middleware
+│   ├── helper/       # Validators, error types, response helpers
+│   ├── logging/      # Structured slog logger
+│   ├── models/       # Domain entities (Payment, DTOs)
+│   ├── repo/         # Repository interface + PostgreSQL implementation
+│   └── service/      # Business logic (Stripe integration)
+├── sql/
+│   └── migrations/   # SQL migrations
+├── config.yaml
+├── Dockerfile
+└── go.mod
 ```
-
-### 3. Configure the Service
-
-Edit `config.yaml` to customize:
-- Server host/port and timeouts
-- Logging level and format
-- Rate limiting parameters
-- Circuit breaker settings
-- Health check paths
-
-### 4. Run the Service
-
-```bash
-go run app/cmd/api/main.go
-```
-
-The server starts on `localhost:8080` (or configured port).
-
-### 5. Test the Health Endpoint
-
-```bash
-curl http://localhost:8080/health
-```
-
-Response:
-```json
-{"status": "ok"}
-```
-
-## Docker
-
-### Build the Image
-
-```bash
-docker build -t microservice-blueprint .
-```
-
-### Run with Docker
-
-```bash
-docker run -p 8080:8080 \
-  -e DATABASE_URL="postgres://user:password@host:5432/dbname?sslmode=disable" \
-  -v /path/to/keys:/app/keys \
-  microservice-blueprint
-```
-
-### Docker Compose
-
-Use `docker-compose.yml` to spin up dependencies (e.g., PostgreSQL):
-
-```bash
-docker-compose up -d
-```
-
-## Project Structure
-
-| Path | Description |
-|------|-------------|
-| `app/cmd/api/main.go` | Application entry point. Wires together database, repository, service, and handler layers, then starts the HTTP server. |
-| `app/internal/config/` | YAML configuration loader with environment variable expansion. |
-| `app/internal/database/` | Database connection pool initialization using `pgx`. |
-| `app/internal/handler/` | HTTP handlers, request routing (`chi`), and middleware (security, JWT, rate limiting). |
-| `app/internal/service/` | Business logic layer. Defines service interfaces and implements use cases. |
-| `app/internal/repo/` | Data access layer. Handles all database queries and transactions. |
-| `app/internal/logging/` | Structured JSON logger configuration using `slog` and `httplog`. |
-| `app/internal/models/` | Domain models and data structures shared across layers. |
-| `app/internal/helper/` | Utility/helper functions including comprehensive error definitions. |
-| `app/sql/` | SQL migration files and queries. |
-| `config.yaml` | Service configuration file. |
-| `Dockerfile` | Multi-stage Docker build with healthcheck. |
 
 ## API Endpoints
 
-### Public Routes (No Authentication)
+### Public Routes
 
 | Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check endpoint. Returns service health status. |
-| `GET` | `/ready` | Readiness check. Verifies database connectivity. |
+|---|---|---|
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/ready` | Readiness probe |
 
 ### Protected Routes (JWT Required)
 
-Add protected endpoints in the protected route group in `routing.go`.
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/payments/process` | Process a payment for a booking |
 
-## Configuration Reference
+## Data Model
 
-### config.yaml
+### `payments` Table
 
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-  read_timeout: 15s
-  write_timeout: 15s
-  idle_timeout: 60s
+| Column | Type | Description |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `booking_id` | UUID | FK → Booking service |
+| `stripe_payment_intent_id` | VARCHAR | Stripe PaymentIntent ID |
+| `amount` | FLOAT | Payment amount in USD |
+| `status` | VARCHAR | `pending`, `succeeded`, `failed`, `requires_action` |
+| `created_at` | TIMESTAMP | Record creation time |
+| `updated_at` | TIMESTAMP | Last update time |
 
-logging:
-  level: "info"
-  format: "json"
+## Flow Diagram
 
-rate_limit:
-  enabled: true
-  requests_per_second: 100
-  burst: 200
-
-circuit_breaker:
-  enabled: true
-  max_failures: 5
-  timeout: 30s
-
-health:
-  path: "/health"
-  ready_path: "/ready"
+```mermaid
+flowchart TD
+    A["BFF sends POST /payments/process"] --> B["JWT Middleware"]
+    B --> B1{"Token Valid?"}
+    B1 -->|No| B2["401 Unauthorized"]
+    B1 -->|Yes| C["Decode ProcessPaymentRequest"]
+    
+    C --> D["Validate Input"]
+    D -->|Invalid| D1["400 Bad Request"]
+    D -->|Valid| E["Generate Payment UUID"]
+    
+    E --> F["Create Payment Record (status: pending)"]
+    F --> G["Initialize Stripe API Key"]
+    G --> H["Create Stripe PaymentIntent"]
+    
+    H --> I{"PaymentIntent Created?"}
+    I -->|Error| J["Update Payment → failed"]
+    J --> J1["Return Stripe error message"]
+    
+    I -->|Success| K{"Intent Status?"}
+    K -->|succeeded| L["Update Payment → succeeded"]
+    K -->|requires_action| M["Update Payment → requires_action"]
+    K -->|other| N["Update Payment → failed"]
+    
+    L --> O["Return PaymentResponse (200 OK)"]
+    M --> O
+    N --> P["Return error response"]
+    
+    subgraph "Stripe API"
+        H1["PaymentIntent.Create"]
+        H1 --> H2["AutomaticPaymentMethods: enabled"]
+        H2 --> H3["AllowRedirects: never"]
+        H3 --> H4["Confirm: true"]
+    end
+    
+    H -->|API Call| H1
 ```
+
+## Use Case Diagram
+
+```mermaid
+graph LR
+    subgraph Actors
+        BFF["🔄 BFF Service"]
+        Admin["🔑 Admin"]
+    end
+    
+    subgraph "Payment Microservice"
+        UC1["Process Payment"]
+        UC2["Record Payment"]
+        UC3["Update Payment Status"]
+    end
+    
+    subgraph "External"
+        Stripe["💳 Stripe API"]
+    end
+    
+    BFF --> UC1
+    UC1 --> UC2
+    UC1 --> UC3
+    UC1 --> Stripe
+```
+
+## State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : Payment record created
+    Pending --> Processing : Stripe PaymentIntent created
+    Processing --> Succeeded : intent.status = succeeded
+    Processing --> RequiresAction : intent.status = requires_action
+    Processing --> Failed : intent.status = other / Stripe error
+    Succeeded --> [*]
+    RequiresAction --> [*]
+    Failed --> [*]
+```
+
+## Package Diagram
+
+```mermaid
+graph TB
+    subgraph "cmd/api"
+        Main["main.go"]
+    end
+    
+    subgraph "internal"
+        subgraph "handler"
+            Handlers["handlers.go"]
+            Routing["routing.go"]
+            MW["middleware.go (JWT)"]
+        end
+        
+        subgraph "service"
+            SVC["service.go"]
+        end
+        
+        subgraph "repo"
+            RepoIF["repo.go (ServiceRepository)"]
+            DBRepo["database_repo.go"]
+        end
+        
+        subgraph "models"
+            Models["models.go"]
+        end
+        
+        subgraph "helper"
+            Helper["validators, errors"]
+        end
+        
+        subgraph "config"
+            Config["config.go"]
+        end
+        
+        subgraph "database"
+            DB["connection.go"]
+        end
+    end
+    
+    subgraph "External"
+        StripeSDK["stripe-go/v78"]
+    end
+    
+    Main --> Config
+    Main --> DB
+    Main --> SVC
+    Main --> Handlers
+    
+    Handlers --> SVC
+    Handlers --> Helper
+    Handlers --> Models
+    Routing --> Handlers
+    Routing --> MW
+    
+    SVC --> RepoIF
+    SVC --> Models
+    SVC --> StripeSDK
+    
+    DBRepo -.->|implements| RepoIF
+    DBRepo --> DB
+    DBRepo --> Models
+```
+
+## Payment Processing Flow
+
+1. **BFF** calls `POST /payments/process` with `booking_id`, `amount`, and `payment_method_id`
+2. Service creates a **pending** payment record in the database
+3. Service calls **Stripe PaymentIntent API** with:
+   - Amount converted to cents
+   - Currency: USD
+   - PaymentMethod: provided by client (e.g., `pm_card_visa`)
+   - AutomaticPaymentMethods: enabled
+   - AllowRedirects: never (no 3D Secure redirect)
+   - Confirm: true (immediate confirmation)
+4. Based on Stripe response, payment status is updated to `succeeded`, `requires_action`, or `failed`
+5. Response is returned to the BFF
+
+## Configuration
 
 ### Environment Variables
 
 | Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (required) |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `STRIPE_SECRET_KEY` | Stripe API secret key |
 
-## Adding New Features
+### Volume Mounts (Docker)
 
-1. **Models**: Define structs in `app/internal/models/models.go`
-2. **Repository**: Add data access methods to `app/internal/repo/repo.go`
-3. **Service**: Add business logic methods to `app/internal/service/service.go` (update the `Service` interface)
-4. **Handler**: Add HTTP handler functions to `app/internal/handler/handlers.go`
-5. **Routing**: Register new routes in `app/internal/handler/routing.go`
-6. **Configuration**: Add any new config options to `config.yaml` and `app/internal/config/config.go`
+| Host Path | Container Path | Description |
+|---|---|---|
+| `./keys/public.pem` | `/app/keys/public.pem` | JWT verification key |
 
-## Error Handling
+## Port Mapping
 
-The service uses a comprehensive error system defined in `app/internal/helper/util.go`:
-
-- **General errors**: `ErrInternalServer`, `ErrUnauthorized`, `ErrForbidden`, `ErrNotFound`, etc.
-- **Database errors**: `ErrDBConnection`, `ErrDBQuery`, `ErrRecordNotFound`, `ErrDuplicateEntry`, etc.
-- **Authentication errors**: `ErrInvalidCredentials`, `ErrInvalidToken`, `ErrTokenExpired`, etc.
-- **Service errors**: `ErrServiceUnavailable`, `ErrCreateFailed`, `ErrProcessingFailed`, etc.
-
-Use `helper.MapError()` in the repository layer to convert raw database errors to application sentinel errors.
+| Context | Port |
+|---|---|
+| Internal (container) | `8080` |
+| External (host) | `8088` |
+| Database (host) | `5438` → `5432` |
