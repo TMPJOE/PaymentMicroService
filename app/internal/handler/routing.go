@@ -43,6 +43,7 @@ func (h *Handler) NewServerMux(rateLimiter *RateLimiter) *chi.Mux {
 		r.Use(h.jwtAuth.Middleware()) // JWT authentication middleware
 
 		// Add protected routes here - keep abstract, not service-specific
+		r.Post("/payments/process", h.processPayment)
 	})
 
 	return r
